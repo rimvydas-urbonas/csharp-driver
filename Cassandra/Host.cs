@@ -17,6 +17,7 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Collections.Concurrent;
+using System.Threading;
 
 namespace Cassandra
 {
@@ -30,7 +31,7 @@ namespace Cassandra
     ///  this host. More active connections will be kept to <code>Local</code> host
     ///  than to a <code>Remote</code> one (and thus well behaving
     ///  <code>LoadBalancingPolicy</code> should assign a <code>Remote</code> distance
-    ///  only to hosts that are the less often queried). <p> However, if an host is
+    ///  only to hosts that are the less often queried). &lt;p&gt; However, if an host is
     ///  assigned the distance <code>Ignored</code>, no connection to that host will
     ///  maintained active. In other words, <code>Ignored</code> should be assigned to
     ///  hosts that should not be used by this driver (because they are in a remote
@@ -54,8 +55,8 @@ namespace Cassandra
         private string _datacenter;
         private string _rack;
 
-        private bool _isUpNow = true;
-        private DateTime _nextUpTime;
+        private volatile bool _isUpNow = true;
+        private DateTimeOffset _nextUpTime;
         readonly IReconnectionPolicy _reconnectionPolicy;
         private IReconnectionSchedule _reconnectionSchedule;
 
@@ -68,14 +69,17 @@ namespace Cassandra
         {
             get
             {
-                return _isUpNow || _nextUpTime <= DateTime.Now;
+                return _isUpNow || (_nextUpTime <= DateTimeOffset.Now);
             }
         }
 
         public bool SetDown()
         {
             if (IsConsiderablyUp)
-                _nextUpTime = DateTime.Now.AddMilliseconds(_reconnectionSchedule.NextDelayMs());
+            {
+                Thread.MemoryBarrier();
+                _nextUpTime = DateTimeOffset.Now.AddMilliseconds(_reconnectionSchedule.NextDelayMs());
+            }
             if (_isUpNow)
             {
                 _isUpNow = false;
@@ -86,9 +90,9 @@ namespace Cassandra
 
         public bool BringUpIfDown()
         {
-            _reconnectionSchedule = _reconnectionPolicy.NewSchedule();
             if (!_isUpNow)
             {
+                Interlocked.Exchange(ref _reconnectionSchedule, _reconnectionPolicy.NewSchedule());
                 _isUpNow = true;
                 return true;
             }

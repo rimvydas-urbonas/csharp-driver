@@ -44,6 +44,15 @@ namespace Cassandra
         /// Gets name of currently used keyspace. 
         /// </summary>
         public string Keyspace { get { return _keyspace; } }
+
+        internal Policies Policies
+        {
+            get
+            {
+                return _policies;
+            }
+        }
+
         private string _keyspace;
 
         public Cluster Cluster { get { return _cluster; } }
@@ -460,19 +469,30 @@ namespace Cassandra
         internal void InternalDispose()
         {
             if (!_alreadyDisposed.TryTake())
+            {
                 return;
+            }
 
-            _trashcanCleaner.Change(Timeout.Infinite, Timeout.Infinite);
+            if (_trashcanCleaner != null)
+            {
+                _trashcanCleaner.Change(Timeout.Infinite, Timeout.Infinite);
+            }
 
             foreach (var kv in _connectionPool)
+            {
                 foreach (var kvv in kv.Value)
                 {
                     var conn = kvv.Value;
                     FreeConnection(conn);
                 }
+            }
             foreach (var kv in _trashcan)
+            {
                 foreach (var ckv in kv.Value)
+                {
                     FreeConnection(ckv.Value);
+                }
+            }
         }
 
         public void Dispose()
@@ -481,9 +501,20 @@ namespace Cassandra
             Cluster.SessionDisposed(this);
         }
 
+        /// <summary>
+        /// Finalizer
+        /// </summary>
         ~Session()
         {
-            Dispose();
+            try
+            {
+                Dispose(); 
+            }
+            catch
+            {
+                //Finalizers are called in their own specific threads.
+                //There is no point in throwing an exception
+            }
         }
 
         #region Execute
@@ -1097,11 +1128,11 @@ namespace Cassandra
                                 if (row.IsNull("rpc_address") || row.IsNull("schema_version"))
                                     continue;
 
-                                var rpc = row.GetValue<IPEndPoint>("rpc_address").Address;
+                                var rpc = row.GetValue<IPAddress>("rpc_address");
                                 if (rpc.Equals(bindAllAddress))
                                 {
                                     if (!row.IsNull("peer"))
-                                        rpc = row.GetValue<IPEndPoint>("peer").Address;
+                                        rpc = row.GetValue<IPAddress>("peer");
                                 }
 
                                 Host peer = _cluster.Metadata.GetHost(rpc);
